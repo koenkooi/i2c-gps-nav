@@ -1226,8 +1226,22 @@ void blink_sonar_update()
   }
 }
 
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Helper function to allow serial output from a string help in program memory
+//
+// Using Serial.write(PSTR("$PUBX,41,1,0003,0001,xxxxxx,0*1E\r\n")); caused an error, the serial data was empty (all zeros) 
+// but the packet length was correct. Possibly Serial.write() does not support being handed a pointer to a string in program memory
 
-
+void print_P(const char *str)
+{
+  uint8_t val;
+  while (true) {
+    val=pgm_read_byte(str);
+    if (!val) break;
+    Serial.write(val);
+    str++;
+  }
+}
 
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1237,7 +1251,7 @@ void blink_sonar_update()
   uint32_t init_speed[5] = {9600,19200,38400,57600,115200};
 
  #if defined(UBLOX)
-   prog_char UBLOX_INIT[] PROGMEM = {                          // PROGMEM array must be outside any function !!!
+   const char UBLOX_INIT[] PROGMEM = {                          // PROGMEM array must be outside any function !!!
      0xB5,0x62,0x06,0x01,0x03,0x00,0xF0,0x05,0x00,0xFF,0x19,                            //disable all default NMEA messages
      0xB5,0x62,0x06,0x01,0x03,0x00,0xF0,0x03,0x00,0xFD,0x15,
      0xB5,0x62,0x06,0x01,0x03,0x00,0xF0,0x01,0x00,0xFB,0x11,
@@ -1263,16 +1277,16 @@ void blink_sonar_update()
       for(uint8_t i=0;i<5;i++){
         Serial.begin(init_speed[i]);          // switch UART speed for sending SET BAUDRATE command (NMEA mode)
         #if (GPS_SERIAL_SPEED==19200)
-          Serial.write(PSTR("$PUBX,41,1,0003,0001,19200,0*23\r\n"));     // 19200 baud - minimal speed for 5Hz update rate
+          print_P(PSTR("$PUBX,41,1,0003,0001,19200,0*23\r\n"));     // 19200 baud - minimal speed for 5Hz update rate
         #endif  
         #if (GPS_SERIAL_SPEED==38400)
-          Serial.write(PSTR("$PUBX,41,1,0003,0001,38400,0*26\r\n"));     // 38400 baud
+          print_P(PSTR("$PUBX,41,1,0003,0001,38400,0*26\r\n"));     // 38400 baud
         #endif  
         #if (GPS_SERIAL_SPEED==57600)
-          Serial.write(PSTR("$PUBX,41,1,0003,0001,57600,0*2D\r\n"));     // 57600 baud
+          print_P(PSTR("$PUBX,41,1,0003,0001,57600,0*2D\r\n"));     // 57600 baud
         #endif  
         #if (GPS_SERIAL_SPEED==115200)
-          Serial.write(PSTR("$PUBX,41,1,0003,0001,115200,0*1E\r\n"));    // 115200 baud
+          print_P(PSTR("$PUBX,41,1,0003,0001,115200,0*1E\r\n"));    // 115200 baud
         #endif  
         delay(300);		//Wait for init 
       }
@@ -1280,7 +1294,9 @@ void blink_sonar_update()
       Serial.begin(GPS_SERIAL_SPEED);  
       for(uint8_t i=0; i<sizeof(UBLOX_INIT); i++) {                        // send configuration data in UBX protocol
         Serial.write(pgm_read_byte(UBLOX_INIT+i));
-        //delay(5); //simulating a 38400baud pace (or less), otherwise commands are not accepted by the device.
+        delay(5); //simulating a 38400baud pace (or less), otherwise commands are not accepted by the device. 
+                  //I found this delay essential for the V1 CN-06 GPS (The one without EEPROM)
+				  //Also essential is the bridging of pins 13- and 14 on the NEO-6M module	
       }
 
 #elif defined(INIT_MTK_GPS)                            // MTK GPS setup
@@ -1475,6 +1491,10 @@ void loop() {
        // We have a valid GGA frame and we have lat and lon in GPS_read_lat and GPS_read_lon, apply moving average filter
        // this is a little bit tricky since the 1e7/deg precision easily overflow a long, so we apply the filter to the fractions
        // only, and strip the full degrees part. This means that we have to disable the filter if we are very close to a degree line
+       
+       // Think this line was in the wrong place. The way it used to be the lastframe_time was only updated when we had a (3D fix && we have 5 or more sats).
+       // This stops the single led blink from indicating a good packet, and the double led blink from indicating a 2D fix
+       lastframe_time = millis();
 
 #pragma region GPS FILTER
        if (i2c_dataset.nav_flags & I2C_NAV_FLAG_GPS_FILTER) {      //is filtering switched on ?
@@ -1510,7 +1530,7 @@ void loop() {
 
        if (i2c_dataset.status.gps3dfix == 1 && i2c_dataset.status.numsats >= 5) {
           
-         lastframe_time = millis();
+         
          //copy the gps coordinates to variables used for calculations
          GPS_latitude = i2c_dataset.gps_loc.lat;
          GPS_longitude = i2c_dataset.gps_loc.lon;
